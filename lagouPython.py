@@ -1,86 +1,161 @@
-#create by 矜持的折返跑
-import time
 import requests
 import pymysql
-config={
-    "host":"127.0.0.1",
-    "user":"root",
-    "password":"",
-    "database":"pachong",
-    "charset":"utf8"
+import time
+import logging
+from pymysql.err import MySQLError
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+
+# Set up logging
+logging.basicConfig(
+    filename='lagou_scraper.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Database configuration
+config = {
+    'host': 'your_host',
+    'user': 'your_username',
+    'password': 'your_password',
+    'db': 'your_database',
+    'charset': 'utf8mb4',
+    'cursorclass': pymysql.cursors.DictCursor
 }
-def lagou(page,position):
-    headers = {'Referer':'https://www.lagou.com/jobs/list_'+position+'?city=%E5%8C%97%E4%BA%AC&cl=false&fromSearch=true&labelWords=&suginput=',               'Origin':'https://www.lagou.com',                'User-Agent':'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.94 Safari/537.36',
-               'Accept':'application/json, text/javascript, */*; q=0.01',
-               'Cookie':'JSESSIONID=ABAAABAAAGFABEFE8A2337F3BAF09DBCC0A8594ED74C6C0; user_trace_token=20180122215242-849e2a04-ff7b-11e7-a5c6-5254005c3644; LGUID=20180122215242-849e3549-ff7b-11e7-a5c6-5254005c3644; index_location_city=%E5%8C%97%E4%BA%AC; _gat=1; TG-TRACK-CODE=index_navigation; _gid=GA1.2.1188502030.1516629163; _ga=GA1.2.667506246.1516629163; LGSID=20180122215242-849e3278-ff7b-11e7-a5c6-5254005c3644; LGRID=20180122230310-5c6292b3-ff85-11e7-a5d5-5254005c3644; Hm_lvt_4233e74dff0ae5bd0a3d81c6ccf756e6=1516629163,1516629182; Hm_lpvt_4233e74dff0ae5bd0a3d81c6ccf756e6=1516633389; SEARCH_ID=8d3793ec834f4b0e8e680572b83eb968'
-               }
-    dates={'first':'true',
-           'pn': page,
-           'kd': position}
-    url='https://www.lagou.com/jobs/positionAjax.json?city=%E5%8C%97%E4%BA%AC&needAddtionalResult=false&isSchoolJob=0'
-    resp = requests.post(url,data=dates,headers=headers)
-    print(resp.content.decode('utf-8'))
-    result=resp.json()['content']['positionResult']['result']
 
-    db = pymysql.connect(**config)
-    positionName = []
-    for i in result:
-        print(i)
-        count=0
-        positionName.append(i['positionName'])
-        timeNow = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        #连接数据库
-        cursor = db.cursor()
-        if i['businessZones']:
-            businessZones = "".join(i['businessZones'])
-        else:
-            businessZones=""
 
-        if i['companyLabelList']:
-            companyLabelList = "".join(i['companyLabelList'])
-        else:
-            companyLabelList=""
+def get_session(position):
+    session = requests.Session()
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    session.mount('http://', HTTPAdapter(max_retries=retries))
 
-        if i['industryLables']:
-            industryLables = "".join(i['industryLables'])
-        else:
-            industryLables=""
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Referer': f'https://www.lagou.com/jobs/list_{position}?city=%E5%8C%97%E4%BA%AC&cl=false&fromSearch=true&labelWords=&suginput='
+    })
 
-        if i['positionLables']:
-            positionLables = "".join(i['positionLables'])
-        else:
-            positionLables=""
+    try:
+        # Initial GET request to set cookies
+        response = session.get(f'https://www.lagou.com/jobs/list_{position}?city=%E5%8C%97%E4%BA%AC', timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logging.error(f"Failed to initialize session: {e}")
 
-        sql = "insert into lagou(positionName,workYear,salary,companyShortName\
-              ,companyIdInLagou,education,jobNature,positionIdInLagou,createTimeInLagou\
-              ,city,industryField,positionAdvantage,companySize,score,positionLables\
-              ,industryLables,publisherId,financeStage,companyLabelList,district,businessZones\
-              ,companyFullName,firstType,secondType,isSchoolJob,subwayline\
-              ,stationname,linestaion,resumeProcessRate,createByMe,keyByMe\
-        )VALUES (%s,%s,%s,%s, \
-              %s,%s,%s,%s,%s\
-              ,%s,%s,%s,%s,%s,%s,%s\
-              ,%s,%s,%s,%s,%s\
-              ,%s,%s,%s,%s,%s\
-              ,%s,%s,%s,%s,%s\
-              )"
-        cursor.execute(sql,(i['positionName'],i['workYear'],i['salary'],i['companyShortName']
-                            ,i['companyId'],i['education'],i['jobNature'],i['positionId'],i['createTime']
-                            ,i['city'],i['industryField'],i['positionAdvantage'],i['companySize'],i['score'],positionLables
-                            ,industryLables,i['publisherId'],i['financeStage'],companyLabelList,i['district'],businessZones
-                            ,i['companyFullName'],i['firstType'],i['secondType'],i['isSchoolJob'],i['subwayline']
-                            ,i['stationname'],i['linestaion'],i['resumeProcessRate'],timeNow,position
-                            ))
-        db.commit()  #提交数据
-        cursor.close()
-        count=count+1
-    db.close()
-def main(position):
-            page = 1
-            while page<=30:
-                print('---------------------第',page,'页--------------------')
-                lagou(page,position)
-                page=page+1
-#输入你想要爬取的职位名,如:python
-if __name__ == '__main__':
-    main('c')
+    return session
+
+
+def insert_into_db(data, db_config):
+    if not data:
+        logging.info("No data to insert into the database.")
+        return
+
+    try:
+        connection = pymysql.connect(**db_config)
+        with connection:
+            with connection.cursor() as cursor:
+                sql = """
+                INSERT INTO lagou (
+                    positionName, workYear, salary, companyShortName, companyIdInLagou,
+                    education, jobNature, positionIdInLagou, createTimeInLagou, city,
+                    industryField, positionAdvantage, companySize, score, positionLables,
+                    industryLables, publisherId, financeStage, companyLabelList, district,
+                    businessZones, companyFullName, firstType, secondType, isSchoolJob,
+                    subwayline, stationname, linestaion, resumeProcessRate, createByMe, keyByMe
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """
+                cursor.executemany(sql, data)
+            connection.commit()
+        logging.info(f"Successfully inserted {len(data)} records into the database.")
+    except MySQLError as e:
+        logging.error(f"Database error during insertion: {e}")
+
+
+def lagou(page, position):
+    session = get_session(position)
+
+    payload = {
+        'first': 'true',
+        'pn': page,
+        'kd': position
+    }
+    url = 'https://www.lagou.com/jobs/positionAjax.json?city=%E5%8C%97%E4%BA%AC&needAddtionalResult=false&isSchoolJob=0'
+
+    try:
+        resp = session.post(url, data=payload, timeout=10)
+        resp.raise_for_status()  # Raise HTTPError for bad responses
+    except requests.RequestException as e:
+        logging.error(f"HTTP request failed: {e}")
+        return
+
+    try:
+        data = resp.json()
+        result = data['content']['positionResult']['result']
+    except (ValueError, KeyError) as e:
+        logging.error(f"Error parsing JSON response: {e}")
+        return
+
+    processed_data = []
+    time_now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+    for item in result:
+        try:
+            record = (
+                item.get('positionName', ''),
+                item.get('workYear', ''),
+                item.get('salary', ''),
+                item.get('companyShortName', ''),
+                item.get('companyId', ''),
+                item.get('education', ''),
+                item.get('jobNature', ''),
+                item.get('positionId', ''),
+                item.get('createTime', ''),
+                item.get('city', ''),
+                item.get('industryField', ''),
+                item.get('positionAdvantage', ''),
+                item.get('companySize', ''),
+                item.get('score', ''),
+                ",".join(item.get('positionLables', [])),
+                ",".join(item.get('industryLables', [])),
+                item.get('publisherId', ''),
+                item.get('financeStage', ''),
+                ",".join(item.get('companyLabelList', [])),
+                item.get('district', ''),
+                ",".join(item.get('businessZones', [])),
+                item.get('companyFullName', ''),
+                item.get('firstType', ''),
+                item.get('secondType', ''),
+                item.get('isSchoolJob', ''),
+                item.get('subwayline', ''),
+                item.get('stationname', ''),
+                item.get('linestaion', ''),
+                item.get('resumeProcessRate', ''),
+                time_now,
+                position
+            )
+            processed_data.append(record)
+        except Exception as e:
+            logging.error(f"Error processing item: {e}")
+            continue  # Skip to the next item in case of error
+
+    insert_into_db(processed_data, config)
+
+
+def scrape_lagou_pages(position, max_pages):
+    for page in range(1, max_pages + 1):
+        logging.info(f"Scraping page {page} for position '{position}'.")
+        lagou(page, position)
+        sleep_time = random.uniform(1, 3)  # Sleep between 1 to 3 seconds
+        logging.info(f"Sleeping for {sleep_time:.2f} seconds to respect rate limits.")
+        time.sleep(sleep_time)
+
+
+if __name__ == "__main__":
+    position_to_search = 'Data Scientist'  # Example position
+    total_pages = 5  # Number of pages to scrape
+    scrape_lagou_pages(position_to_search, total_pages)
